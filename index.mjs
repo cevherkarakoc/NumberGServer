@@ -42,6 +42,10 @@ wss.on("connection", function connection(ws) {
       const message = JSON.parse(data);
       const { type, id, payload } = message;
       switch (type) {
+        case "get-user":
+          getUser(ws, id);
+
+          break;
         case "set-user-name":
           setUserName(ws, id, payload);
 
@@ -66,15 +70,16 @@ wss.on("connection", function connection(ws) {
           newGame(ws, id, payload);
 
           break;
+        case "end-game":
+          closeBoth(ws, id)
+
+          break;
         case "info":
           info(ws, id);
           break;
         default:
           break;
       }
-
-      console.log(users);
-      console.log(games);
     } catch (err) {
       console.error(err);
     }
@@ -83,7 +88,7 @@ wss.on("connection", function connection(ws) {
   ws.on("close", function close() {
     try {
       console.log("close", uuid);
-      closeBoth(ws, uuid);
+      //closeBoth(ws, uuid);
     } catch (err) {
       console.error(err);
     }
@@ -103,16 +108,26 @@ function send(ws, type, payload) {
 }
 
 function sendGame(ws, game) {
-  const gameAlpha = JSON.parse(JSON.stringify(game));
-  const gameDelta = JSON.parse(JSON.stringify(game));
+  const gameAlpha = JSON.parse(JSON.stringify(game, replacer));
+  const gameDelta = JSON.parse(JSON.stringify(game, replacer));
 
   if (game.phase !== "end") {
-    gameAlpha.delta.number = null;
-    gameDelta.alpha.number = null;
+    if (gameAlpha.delta) {
+      gameAlpha.delta.number = null;
+    }
+
+    if (gameDelta.alpha) {
+      gameDelta.alpha.number = null;
+    }
   }
 
-  send(game.alpha.user.ws, "game", gameAlpha);
-  send(game.delta.user.ws, "game", gameDelta);
+  if (game.alpha) {
+    send(game.alpha.user.ws, "game", gameAlpha);
+  }
+
+  if (game.delta) {
+    send(game.delta.user.ws, "game", gameDelta);
+  }
 }
 
 function closeBoth(ws, id) {
@@ -125,13 +140,36 @@ function closeBoth(ws, id) {
 
   const game = games.get(gameName);
   if (game) {
-    users.delete(game.alpha.user.id);
-    users.delete(game.delta.user.id);
+    game.alpha.user.gameName = '';
+    game.delta.user.gameName = ''
   } else {
-    users.delete(id);
+    user.gameName = '';
   }
 
   games.delete(gameName);
+}
+
+function getUser(ws, id) {
+  const user = users.get(id);
+
+  if (!user) {
+    return;
+  }
+
+  user.ws = ws;
+
+  if (user.gameName) {
+    const game = games.get(user.gameName);
+    if (game) {
+      sendGame(ws, game);
+    }
+  } else {
+    user.gameName = "";
+  }
+
+  const { ws: _ws, ...payload } = user;
+
+  send(ws, "user", payload);
 }
 
 function setUserName(ws, id, { name }) {
@@ -148,11 +186,12 @@ function createGame(ws, id) {
 
   const user = users.get(id);
   user.gameName = gameName;
+  user.playerTag = "alpha";
 
   const game = {
     name: gameName,
     phase: "wait-for-delta",
-    match : 1,
+    match: 1,
     [id]: "alpha",
     alpha: {
       user: users.get(id),
@@ -175,6 +214,7 @@ function joinGame(ws, id, { name }) {
 
   const user = users.get(id);
   user.gameName = game.name;
+  user.playerTag = "delta";
 
   game.delta = {
     user: users.get(id),
@@ -232,6 +272,10 @@ function guessNumber(ws, id, { gameName, number }) {
 function newGame(ws, id, { gameName }) {
   const game = games.get(gameName);
 
+  if(!game) {
+    return;
+  }
+
   game.match += 1;
 
   if (game.match % 2 === 0) {
@@ -284,4 +328,12 @@ function info(ws, id) {
   console.log(users.get(id));
   console.log(games);
   send(ws, { user: users.get(id) });
+}
+
+function replacer(key, value) {
+  if (key == "wc") {
+    return undefined;
+  }
+
+  return value;
 }
